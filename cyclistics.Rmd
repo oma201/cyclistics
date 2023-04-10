@@ -1,0 +1,245 @@
+---
+title: "Cyclistics"
+author: "omar moharrem"
+date: "2023-04-03"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+
+# import and install tools
+
+```{r importing and installing tools}
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+library(magrittr)
+library(ggplot2)
+library(geosphere)
+install.packages("snakecase", repos = "http://cran.us.r-project.org")
+library(snakecase)
+```
+# import data
+```{r}
+ may <- read.csv("202004-divvy-tripdata.csv")
+jun <- read.csv("202005-divvy-tripdata.csv")
+jul <- read.csv("202006-divvy-tripdata.csv")
+aug <- read.csv("202007-divvy-tripdata.csv")
+sep <- read.csv("202008-divvy-tripdata.csv")
+oct <- read.csv("202009-divvy-tripdata.csv")
+nov <- read.csv("202010-divvy-tripdata.csv")
+dec <- read.csv("202011-divvy-tripdata.csv")
+jen_21 <-read.csv("202012-divvy-tripdata.csv")
+feb_21 <- read.csv("202101-divvy-tripdata.csv")
+mar_21 <- read.csv("202102-divvy-tripdata.csv")
+apr_21 <- read.csv("202103-divvy-tripdata.csv")
+```
+## aggregate data
+```{r}
+aggregate_data_frame <- rbind(may, jun, jul, aug, sep, oct, nov, dec,jen_21,feb_21,mar_21,apr_21)
+```
+## familiarize with data
+```{r}
+head(aggregate_data_frame)
+summary(aggregate_data_frame)
+```
+# data cleaning
+```{r}
+clean_data <- na.omit(aggregate_data_frame)
+```
+### check
+```{r}
+head(clean_data)
+colSums(is.na(clean_data))
+```
+### the starting time must be before the ending time so in this section i cleared the rows which starting time is after the ending time
+```{r}
+clean_data <- clean_data[clean_data$started_at <= clean_data$ended_at, ]
+```
+## check
+```{r}
+clean_data %>%
+  filter(started_at > ended_at)
+```
+## dealing with duplicate rows
+```{r}
+clean_data <- subset(clean_data, !duplicated(clean_data))
+```
+### check
+```{r}
+which(duplicated(clean_data))
+```
+# calculation,metrics and grouping 
+## ride duration calculation
+```{r}
+clean_data$ride_duration_min <- as.numeric(difftime(clean_data$ended_at, clean_data$started_at, units = "mins"))
+head(clean_data)
+```
+## changing of number of casual and member customers among the time
+### Create a new data frame with the count of casual and member riders
+```{r}
+riders_by_month <- clean_data %>%
+  group_by(year = lubridate::year(started_at), month = lubridate::month(started_at, label = TRUE)) %>%
+  summarize(casual_riders = sum(member_casual == "casual"),
+            member_riders = sum(member_casual == "member"))
+```
+## group the data by month and rider type and calculate the number of rides
+```{r}
+rides_by_month_and_rider <- clean_data %>% 
+  group_by(month = lubridate::month(started_at), member_casual) %>% 
+  summarize(total_rides = n())
+```
+## group by month and year and count the number of rides
+```{r}
+# group by month and year and count the number of rides
+rides_per_month_year <- clean_data %>%
+  group_by(year = lubridate::year(started_at), month = lubridate::month(started_at, label = TRUE)) %>%
+  summarize(total_rides = n()) %>%
+  arrange(year, month)
+```
+## create a new column for hour of day
+```{r}
+clean_data$hour <- lubridate::hour(clean_data$started_at)
+```
+
+## calculate distance between start and end coordinates
+### Convert longitude and latitude values to radians
+```{r}
+lat1 <- clean_data$start_lat * pi/180
+lon1 <- clean_data$start_lng * pi/180
+lat2 <- clean_data$end_lat * pi/180
+lon2 <- clean_data$end_lng * pi/180
+```
+## Calculate distance between the two points using the Vincenty formula
+```{r}
+clean_data$distance_meters <- distVincentyEllipsoid(cbind(lon1, lat1), cbind(lon2, lat2))
+```
+## weekdays column
+```{r}
+clean_data$day_of_week <- weekdays(as.Date(clean_data$started_at))
+clean_data <- clean_data %>% 
+  mutate(day_order = recode(day_of_week, 
+                            "Monday" = 1, 
+                            "Tuesday" = 2, 
+                            "Wednesday" = 3, 
+                            "Thursday" = 4, 
+                            "Friday" = 5, 
+                            "Saturday" = 6, 
+                            "Sunday" = 7))
+```
+## comparing casual and member rides in the week days
+```{r}
+daily_rides <- clean_data %>%
+  group_by(day_of_week, member_casual) %>%
+  summarize(total_rides = n()) %>%
+  ungroup()
+```
+## create a new data frame with the counts of ride trips and ride duration starting from each station
+```{r}
+start_stations <- clean_data %>% 
+  group_by(start_station_name) %>% 
+  summarize(total_trips = n(), ride_duration_min = sum(ride_duration_min)) %>% 
+  arrange(desc(total_trips))
+start_stations <- start_stations %>% filter(total_trips != 39218)
+```
+## top 10 stations in ride duration
+```{r}
+start_stations_top10_ride_duration <- start_stations %>%
+  top_n(10,ride_duration_min )
+```
+## top 10 stations in total trips
+```{r}
+start_stations_top10_total_trips <- start_stations %>%
+  top_n(10,total_trips )
+```
+
+# statistical brief
+```{r}
+print(mean(clean_data$ride_duration_min))
+print(max(clean_data$ride_duration_min))
+mode_weekday <- mode(clean_data$day_order)
+cat("The mode weekday is", mode_weekday, "\n")
+```
+
+
+# data vizzes
+## compare riding duration of casual and member riders
+```{r}
+ggplot(clean_data, aes(x = member_casual, y = ride_duration_min)) + 
+  geom_bar(stat = "summary") +
+  labs(title = "Ride Duration by Rider Type", x = "Rider Type", y = "Ride Duration (minutes)")
+```
+## comparing number of casual and member trip rides in each month
+```{r}
+ggplot(rides_by_month_and_rider, aes(x = month, y = total_rides/1000, fill = member_casual)) + 
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Monthly Rides by Rider Type", x = "Month", y = "Number of Rides/1000") +
+  scale_x_discrete(labels = c( "May", "June","July", "August", "September", "October", "November", "December" , "January", "February", "March", "April"))
+```
+## Create a line chart of the count of casual and member riders by month
+```{r}
+ggplot(data = riders_by_month, aes(x = month, y = casual_riders/1000, group = year, color = "Casual Riders")) +
+  geom_line() +
+  geom_point() +
+  geom_line(aes(y = member_riders/1000, color = "Member Riders")) +
+  geom_point(aes(y = member_riders/1000, color = "Member Riders")) +
+  labs(title = "Number of Casual and Member Riders by Month",
+       x = "Month",
+       y = "Number of Riders/1000",
+       color = "Member Type") +
+  scale_color_manual(values = c("Member Riders" = "blue", "Casual Riders" = "red"))
+```
+## create a bar chart with rider type on the x-axis and hour of day on the y-axis
+```{r}
+ggplot(clean_data, aes(x = member_casual, fill = factor(hour))) +
+  geom_bar(position = "dodge") +
+  scale_fill_discrete(name = "Hour of Day", labels = c("Midnight", "", "2 AM", "", "4 AM", "", "6 AM", "", "8 AM", "", "10 AM", "", "Noon", "", "2 PM", "", "4 PM", "", "6 PM", "", "8 PM", "", "10 PM")) +
+  labs(title = "Number of Trips by Hour of Day and Rider Type",
+       x = "Rider Type",
+       y = "Number of Trips") +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title.x = element_text(size = 14, face = "bold"),
+        axis.title.y = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 16, face = "bold"))
+```
+## comparing Casual and member distance
+```{r}
+ggplot(clean_data, aes(x = member_casual, y = distance_meters)) +
+  geom_bar(stat = "summary", fun = "median", fill = "#4e79a7") +
+  labs(title = "Distance Covered by Rider Type",
+       x = "Rider Type",
+       y = "Distance (M)")
+```
+## comparing casual and member rides in the week days
+```{r}
+ggplot(daily_rides, aes(x = day_of_week, y = total_rides/1000, fill = member_casual)) +
+  geom_col(position = "dodge") +
+  labs(title = "Number of Rides by Day of Week and Rider Type", x = "Day of Week", y = "Total Rides/1000") +
+  scale_fill_manual(values = c("#0072B2", "#F0E442"), labels = c("Member", "Casual")) +
+  theme_minimal()
+```
+## plot the top 10 stations in total trips
+```{r}
+ggplot(start_stations_top10_total_trips, aes(x = start_station_name, y = total_trips)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Number of Ride Trips Starting from Each Station", x = "Start Station", y = "Number of Trips")
+```
+## plot the top 10 stations in ride duration
+```{r}
+ggplot(start_stations_top10_ride_duration, aes(x = start_station_name, y = ride_duration_min)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = " Total Ride duration from Each Station", x = "Start Station", y = "Ride duration min")
+```
+
